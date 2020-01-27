@@ -1,0 +1,12 @@
+/**
+ * if sel == 0 then invert it
+ */
+
+CHIP InvertMaybe {
+    IN in[16], sel;
+    OUT out[16];
+
+    PARTS:
+    Not16(in=in, out=notin);
+    Mux16(a=in, b=notin, sel=sel, out=out);
+}

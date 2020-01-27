@@ -9,6 +9,15 @@
  * else if (load[t] == 1)  out[t+1] = in[t]
  * else if (inc[t] == 1)   out[t+1] = out[t] + 1  (integer addition)
  * else                    out[t+1] = out[t]
+
+ a if sel == 000 = no change
+ b if sel == 001 = reset
+ c if sel == 010 = load
+ d if sel == 011 = reset
+ e if sel == 100 = inc
+ f if sel == 101 = reset
+ g if sel == 110 = load
+ h if sel == 111 = reset
  */
 
 CHIP PC {
@@ -16,5 +25,7 @@ CHIP PC {
     OUT out[16];
 
     PARTS:
-    // Put your code here:
+    Inc16(in=prev, out=plusone);
+    Mux8Way16(a=prev, c=in, e=plusone, g=in, sel[2]=inc, sel[1]=load, sel[0]=reset, out=next);
+    Register(in=next, load=true, out=prev, out=out);
 }

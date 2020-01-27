@@ -7,7 +7,7 @@
  * The ALU (Arithmetic Logic Unit).
  * Computes one of the following functions:
  * x+y, x-y, y-x, 0, 1, -1, x, y, -x, -y, !x, !y,
- * x+1, y+1, x-1, y-1, x&y, x|y on two 16-bit inputs, 
+ * x+1, y+1, x-1, y-1, x&y, x|y on two 16-bit inputs,
  * according to 6 input bits denoted zx,nx,zy,ny,f,no.
  * In addition, the ALU computes two 1-bit outputs:
  * if the ALU output == 0, zr is set to 1; otherwise zr is set to 0;
@@ -27,8 +27,8 @@
 // if (out < 0) set ng = 1
 
 CHIP ALU {
-    IN  
-        x[16], y[16],  // 16-bit inputs        
+    IN
+        x[16], y[16],  // 16-bit inputs
         zx, // zero the x input?
         nx, // negate the x input?
         zy, // zero the y input?
@@ -36,11 +36,35 @@ CHIP ALU {
         f,  // compute out = x + y (if 1) or x & y (if 0)
         no; // negate the out output?
 
-    OUT 
+    OUT
         out[16], // 16-bit output
         zr, // 1 if (out == 0), 0 otherwise
         ng; // 1 if (out < 0),  0 otherwise
 
     PARTS:
-   // Put you code here:
+    // if (zx == 1) set x = 0        // 16-bit constant
+    Mux16(a=x, sel=zx, out=xval);
+
+    // if (nx == 1) set x = !x       // bitwise not
+    InvertMaybe(in=xval, sel=nx, out=xval2);
+
+    // if (zy == 1) set y = 0        // 16-bit constant
+    Mux16(a=y, sel=zy, out=yval);
+
+    // if (ny == 1) set y = !y       // bitwise not
+    InvertMaybe(in=yval, sel=ny, out=yval2);
+
+    // if (f == 1)  set out = x + y  // integer 2's complement addition
+    // if (f == 0)  set out = x & y  // bitwise and
+    Add16(a=xval2, b=yval2, out=xplusy);
+    And16(a=xval2, b=yval2, out=xandy);
+    Mux16(a=xandy, b=xplusy, sel=f, out=result);
+
+    // if (no == 1) set out = !out   // bitwise not
+    // if (out < 0) set ng = 1
+    InvertMaybe(in=result, sel=no, out=out, out=finalout, out[15]=ng);
+
+    // if (out == 0) set zr = 1
+    Or16Way(in=finalout, out=any);
+    Not(in=any, out=zr);
 }

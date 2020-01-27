@@ -9,6 +9,10 @@
  *                {0, in, 0, 0} if sel == 01
  *                {0, 0, in, 0} if sel == 10
  *                {0, 0, 0, in} if sel == 11
+ 0 -> 0 -> a
+   -> 1 -> b
+ 1 -> 0 -> c
+   -> 1 -> d
  */
 
 CHIP DMux4Way {
@@ -16,5 +20,7 @@ CHIP DMux4Way {
     OUT a, b, c, d;
 
     PARTS:
-    // Put your code here:
+    DMux(in=in, a=zero, b=one, sel=sel[1]);
+    DMux(in=zero, a=a, b=b, sel=sel[0]);
+    DMux(in=one, a=c, b=d, sel=sel[0]);
 }

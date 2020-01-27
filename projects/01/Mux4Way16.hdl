@@ -9,6 +9,12 @@
  *       b if sel == 01
  *       c if sel == 10
  *       d if sel == 11
+
+ out = mux(
+    mux(a, c, sel[1]),
+    mux(b, d, sel[1]),
+    sel[0]
+ )
  */
 
 CHIP Mux4Way16 {
@@ -16,5 +22,8 @@ CHIP Mux4Way16 {
     OUT out[16];
 
     PARTS:
-    // Put your code here:
+    Mux16(a=a, b=c, sel=sel[1], out=ac);
+    Mux16(a=b, b=d, sel=sel[1], out=bd);
+
+    Mux16(a=ac, b=bd, sel=sel[0], out=out);
 }
