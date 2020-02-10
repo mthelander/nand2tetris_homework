@@ -109,11 +109,9 @@ CHIP CPU {
     Or(a=ng, b=zr, out=ngorzr);
     Not(in=ngorzr, out=notngorzr);
 
-    And(a=instruction[2], b=ng, out=jmp1);
-    And(a=instruction[1], b=zr, out=jmp2);
-    And(a=instruction[0], b=notngorzr, out=jmp3);
-    Or8Way(in[0]=jmp1, in[1]=jmp2, in[2]=jmp3, out=jmp4);
-    And(a=instruction[15], b=jmp4, out=loadpc);
+    And16(a[0..2]=instruction[0..2], b[0]=notngorzr, b[1]=zr, b[2]=ng, out[0..2]=jmp);
+    Or8Way(in[0..2]=jmp, out=jmp2);
+    And(a=instruction[15], b=jmp2, out=loadpc);
 
     PC(in=aregout, load=loadpc, reset=reset, inc=true, out[0..14]=pc);
 }
