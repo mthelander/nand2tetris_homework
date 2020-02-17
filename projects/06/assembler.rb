@@ -73,7 +73,7 @@ class Command
     end
   end
 
-  def binary_code
+  def binary_code(symbol_table)
     code = Code.new # TODO: combine Code with Command
 
     val = if c_command?
@@ -85,10 +85,25 @@ class Command
       ]
       parts.join
     elsif a_command?
-      symbol.to_i.to_s(2)
+      s = symbol
+      unless is_numeric?(s)
+        if symbol_table.contains?(s)
+          s = symbol_table.get_address(s)
+        else
+          addr = symbol_table.next_available_address
+          symbol_table.next_available_address += 1
+          symbol_table.add_entry(s, addr)
+          s = addr
+        end
+      end
+      s.to_i.to_s(2)
     end
 
     val.rjust(16, ?0) unless val.nil?
+  end
+
+  def is_numeric?(s)
+    true if Float(s) rescue false
   end
 end
 
@@ -167,14 +182,58 @@ class Code
   end
 end
 
+class SymbolTable
+  attr_accessor :table, :next_available_address
+
+  def initialize
+    @table = {
+      "SP"     => 0,
+      "LCL"    => 1,
+      "ARG"    => 2,
+      "THIS"   => 3,
+      "THAT"   => 4,
+      "SCREEN" => 16384,
+      "KBD"    => 24576,
+    }
+    (0..15).each do |register|
+      @table["R#{register}"] = register
+    end
+    @next_available_address = 16
+  end
+
+  def add_entry(key, address)
+    @table[key] = address
+  end
+
+  def contains?(key)
+    @table.key?(key)
+  end
+
+  def get_address(key)
+    @table[key]
+  end
+end
+
 def main(filename)
   parser = Parser.new(filename)
   code = Code.new
+  symbol_table = SymbolTable.new
   binaries = []
   output_filename = filename.gsub('.asm', '.hack')
 
-  parser.commands.reject(&:is_comment?).each do |command|
-    val = command.binary_code
+  commands = parser.commands.reject(&:is_comment?)
+  current_address = 0
+
+  commands.each do |command|
+    if command.a_command? || command.c_command?
+      current_address += 1
+    elsif command.l_command?
+      symbol_table.add_entry(command.symbol, current_address)
+    end
+  end
+
+  commands.each do |command|
+    val = command.binary_code(symbol_table)
     binaries << val unless val.nil?
   end
 
