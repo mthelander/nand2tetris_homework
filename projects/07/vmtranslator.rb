@@ -69,7 +69,7 @@ class BinaryOperatorCommand < VMCommand
 
       @SP               // SP++
       M=M+1
-      // START OF #{self}
+      // END OF #{self}
     HACK
   end
 end
@@ -132,7 +132,7 @@ class SubCommand < BinaryOperatorCommand
 
       @SP               // SP++
       M=M+1
-      // START OF #{self}
+      // END OF #{self}
     HACK
   end
 end
@@ -271,25 +271,33 @@ class PushCommand < VMCommand
       'local'    => 'LCL',
       'this'     => 'THIS',
       'that'     => 'THAT',
-      'temp'     => 'TEMP',
       'argument' => 'ARG',
+      'pointer'  => 'THIS',
     }
   end
 
   def to_hack
-    _, segment, index = @line.split(' ')
-    offset_modifier = (['A=A+1'] * index.to_i) * "\n"
+    _, segment, index_str = @line.split(' ')
+    index = index_str.to_i
+    offset_modifier = (['A=A+1'] * index) * "\n"
+
     arg_hack = case segment
       when 'constant'
         <<-HACK
           @#{index}
           D=A
         HACK
-      when 'local', 'this', 'that', 'argument', 'temp'
-        symbol = symbol_map[segment]
+      when 'local', 'this', 'that', 'argument'
+        symbol = symbol_map[segment] or raise "Invalid segment: #{segment}"
         <<-HACK
           @#{symbol}
+          A=M
           #{offset_modifier}
+          D=M
+        HACK
+      when 'temp'
+        <<-HACK
+          @#{5 + index}
           D=M
         HACK
     end
@@ -314,15 +322,22 @@ class PopCommand < PushCommand
   end
 
   def to_hack
-    _, segment, index = @line.split(' ')
-    offset_modifier = (['A=A+1'] * index.to_i) * "\n"
+    _, segment, index_str = @line.split(' ')
+    index = index_str.to_i
+    offset_modifier = (['A=A+1'] * index) * "\n"
+
     arg_hack = case segment
-      when 'local', 'this', 'that', 'argument', 'temp'
-        symbol = symbol_map[segment]
+      when 'local', 'this', 'that', 'argument'
+        symbol = symbol_map[segment] or raise "Invalid segment: #{segment}"
         <<-HACK
           @#{symbol}
           A=M
           #{offset_modifier}
+          M=D
+        HACK
+      when 'temp'
+        <<-HACK
+          @#{5 + index}
           M=D
         HACK
     end
