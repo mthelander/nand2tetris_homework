@@ -25,26 +25,26 @@ class VMCommand
   end
 
   class << self
-    def command_types
-      return [
-        AddCommand,
-        SubCommand,
-        EqCommand,
-        GtCommand,
-        LtCommand,
-        AndCommand,
-        OrCommand,
-        NegCommand,
-        NotCommand,
-        PushCommand,
-        PopCommand,
-        NoOpCommand,
-      ]
+    def get_class(vmline)
+      case vmline
+        when 'add'   then AddCommand
+        when 'sub'   then SubCommand
+        when 'eq'    then EqCommand
+        when 'gt'    then GtCommand
+        when 'lt'    then LtCommand
+        when 'and'   then AndCommand
+        when 'or'    then OrCommand
+        when 'neg'   then NegCommand
+        when 'not'   then NotCommand
+        when /^push/ then PushCommand
+        when /^pop/  then PopCommand
+        else              VMCommand # no-op: comments and whitespace
+      end
     end
 
     def create(line, filename)
-      (code = line.split('//').first || "").strip!
-      command_types.find { |cls| cls.matches?(code) }.new(code, filename)
+      (vmline = line.split('//').first || "").strip!
+      get_class(vmline).new(vmline, filename)
     end
   end
 end
@@ -93,20 +93,12 @@ class UnaryOperatorCommand < VMCommand
 end
 
 class AddCommand < BinaryOperatorCommand
-  def self.matches?(line)
-    line == 'add'
-  end
-
   def operator_code
     'M=D+M'
   end
 end
 
 class SubCommand < BinaryOperatorCommand
-  def self.matches?(line)
-    line == 'sub'
-  end
-
   def operator_code
     <<-HACK
       D=-D
@@ -116,40 +108,24 @@ class SubCommand < BinaryOperatorCommand
 end
 
 class AndCommand < BinaryOperatorCommand
-  def self.matches?(line)
-    line == 'and'
-  end
-
   def operator_code
     'M=D&M'
   end
 end
 
 class OrCommand < BinaryOperatorCommand
-  def self.matches?(line)
-    line == 'or'
-  end
-
   def operator_code
     'M=D|M'
   end
 end
 
 class NegCommand < UnaryOperatorCommand
-  def self.matches?(line)
-    line == 'neg'
-  end
-
   def operator
     ?-
   end
 end
 
 class NotCommand < UnaryOperatorCommand
-  def self.matches?(line)
-    line == 'not'
-  end
-
   def operator
     ?!
   end
@@ -161,10 +137,6 @@ class EqCommand < BinaryOperatorCommand
   def initialize(line, filename)
     @address = (@@address += 1)
     super
-  end
-
-  def self.matches?(line)
-    line == 'eq'
   end
 
   def jump_instruction
@@ -201,20 +173,12 @@ class EqCommand < BinaryOperatorCommand
 end
 
 class GtCommand < EqCommand
-  def self.matches?(line)
-    line == 'gt'
-  end
-
   def jump_instruction
     'JGT'
   end
 end
 
 class LtCommand < EqCommand
-  def self.matches?(line)
-    line == 'lt'
-  end
-
   def jump_instruction
     'JLT'
   end
@@ -222,10 +186,6 @@ end
 
 class PushCommand < VMCommand
   TEMP_ADDRESS = 5
-
-  def self.matches?(line)
-    line.start_with?('push')
-  end
 
   def get_pointer_symbol(segment, index)
     case
@@ -245,10 +205,13 @@ class PushCommand < VMCommand
     }
   end
 
+  def offset_commands(index)
+    (['A=A+1'] * index) * "\n"
+  end
+
   def to_hack
     _, segment, index_str = @line.split(' ')
     index = index_str.to_i
-    offset_modifier = (['A=A+1'] * index) * "\n"
 
     arg_hack = case segment
       when 'constant'
@@ -261,7 +224,7 @@ class PushCommand < VMCommand
         <<-HACK
           @#{symbol}
           A=M
-          #{offset_modifier}
+          #{offset_commands(index)}
           D=M
         HACK
       when 'temp', 'pointer', 'static'
@@ -283,14 +246,9 @@ class PushCommand < VMCommand
 end
 
 class PopCommand < PushCommand
-  def self.matches?(line)
-    line.start_with?('pop')
-  end
-
   def to_hack
     _, segment, index_str = @line.split(' ')
     index = index_str.to_i
-    offset_modifier = (['A=A+1'] * index) * "\n"
 
     arg_hack = case segment
       when 'local', 'this', 'that', 'argument'
@@ -298,7 +256,7 @@ class PopCommand < PushCommand
         <<-HACK
           @#{symbol}
           A=M
-          #{offset_modifier}
+          #{offset_commands(index)}
           M=D
         HACK
       when 'temp', 'pointer', 'static'
@@ -315,12 +273,6 @@ class PopCommand < PushCommand
       D=M
       #{arg_hack}
     HACK
-  end
-end
-
-class NoOpCommand < VMCommand
-  def self.matches?(line)
-    true
   end
 end
 
