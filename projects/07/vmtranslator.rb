@@ -108,11 +108,11 @@ class SubCommand < BinaryOperatorCommand
   end
 
   def operator
-    # TODO: order?
     ?-
   end
 
   def to_hack
+    # TODO: reuse AddCommand
     <<-HACK
       // START OF #{self}
       @SP
@@ -194,6 +194,7 @@ class EqCommand < BinaryOperatorCommand
   end
 
   def to_hack
+    # TODO: reuse BinaryOperatorCommand
     <<-HACK
       // START OF #{self}
       @SP
@@ -265,37 +266,77 @@ class PushCommand < VMCommand
     line.start_with?('push')
   end
 
+  def symbol_map
+    @symbol_map ||= {
+      'local'    => 'LCL',
+      'this'     => 'THIS',
+      'that'     => 'THAT',
+      'temp'     => 'TEMP',
+      'argument' => 'ARG',
+    }
+  end
+
   def to_hack
     _, segment, index = @line.split(' ')
-
-    if segment == 'constant'
-      # sp = &sp + 1
-      # *sp = segment[index]
-      return <<-HACK
-        // START OF PUSH
-        @#{index}
-        D=A
-
-        @SP
-        A=M
-        M=D
-
-        @SP
-        M=M+1
-        // END OF PUSH
-      HACK
+    offset_modifier = (['A=A+1'] * index.to_i) * "\n"
+    arg_hack = case segment
+      when 'constant'
+        <<-HACK
+          @#{index}
+          D=A
+        HACK
+      when 'local', 'this', 'that', 'argument', 'temp'
+        symbol = symbol_map[segment]
+        <<-HACK
+          @#{symbol}
+          #{offset_modifier}
+          D=M
+        HACK
     end
 
-    <<-HACK
-      @#{segment.upcase}
-      A=A+#{index}
+    return <<-HACK
+      // START OF PUSH
+      #{arg_hack}
+      @SP     // *SP = D
+      A=M
+      M=D
+
+      @SP   // SP++
+      M=M+1
+      // END OF PUSH
     HACK
   end
 end
 
-class PopCommand < VMCommand
+class PopCommand < PushCommand
   def self.matches?(line)
     line.start_with?('pop')
+  end
+
+  def to_hack
+    _, segment, index = @line.split(' ')
+    offset_modifier = (['A=A+1'] * index.to_i) * "\n"
+    arg_hack = case segment
+      when 'local', 'this', 'that', 'argument', 'temp'
+        symbol = symbol_map[segment]
+        <<-HACK
+          @#{symbol}
+          A=M
+          #{offset_modifier}
+          M=D
+        HACK
+    end
+
+    return <<-HACK
+      // START OF POP
+      @SP   // SP--
+      M=M-1
+      A=M   // D=*SP
+      D=M
+
+      #{arg_hack}
+      // END OF POP
+    HACK
   end
 end
 
