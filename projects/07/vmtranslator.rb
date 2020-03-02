@@ -262,6 +262,8 @@ class LtCommand < EqCommand
 end
 
 class PushCommand < VMCommand
+  TEMP_ADDRESS = 5
+
   def self.matches?(line)
     line.start_with?('push')
   end
@@ -272,7 +274,6 @@ class PushCommand < VMCommand
       'this'     => 'THIS',
       'that'     => 'THAT',
       'argument' => 'ARG',
-      'pointer'  => 'THIS',
     }
   end
 
@@ -297,7 +298,14 @@ class PushCommand < VMCommand
         HACK
       when 'temp'
         <<-HACK
-          @#{5 + index}
+          @#{TEMP_ADDRESS + index}
+          D=M
+        HACK
+      when 'pointer'
+        # TODO: fold this in with temp?
+        symbol = index == 0 ? 'THIS' : 'THAT'
+        <<-HACK
+          @#{symbol}
           D=M
         HACK
     end
@@ -337,7 +345,13 @@ class PopCommand < PushCommand
         HACK
       when 'temp'
         <<-HACK
-          @#{5 + index}
+          @#{TEMP_ADDRESS + index}
+          M=D
+        HACK
+      when 'pointer'
+        symbol = index == 0 ? 'THIS' : 'THAT'
+        <<-HACK
+          @#{symbol}
           M=D
         HACK
     end
