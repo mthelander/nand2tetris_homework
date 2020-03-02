@@ -5,15 +5,15 @@ class VMParser
 
   def initialize(filename)
     @lines = File.readlines(filename)
-    @commands = @lines.map(&VMCommand.method(:create))
+    @commands = @lines.map { |line| VMCommand.create(line, filename) }
   end
 end
 
 class VMCommand
-  attr_accessor :line
+  attr_accessor :line, :filename
 
-  def initialize(line)
-    @line = line
+  def initialize(line, filename)
+    @line, @filename = line, filename
   end
 
   def to_hack_no_whitespace
@@ -42,9 +42,9 @@ class VMCommand
       ]
     end
 
-    def create(line)
+    def create(line, filename)
       (code = line.split('//').first || "").strip!
-      command_types.find { |cls| cls.matches?(code) }.new(code)
+      command_types.find { |cls| cls.matches?(code) }.new(code, filename)
     end
   end
 end
@@ -308,6 +308,13 @@ class PushCommand < VMCommand
           @#{symbol}
           D=M
         HACK
+      when 'static'
+        fname = (File.basename(@filename, ".*"))
+        symbol = [ fname, index ].join(?.)
+        <<-HACK
+          @#{symbol}
+          D=M
+        HACK
     end
 
     return <<-HACK
@@ -350,6 +357,13 @@ class PopCommand < PushCommand
         HACK
       when 'pointer'
         symbol = index == 0 ? 'THIS' : 'THAT'
+        <<-HACK
+          @#{symbol}
+          M=D
+        HACK
+      when 'static'
+        fname = (File.basename(@filename, ".*"))
+        symbol = [ fname, index ].join(?.)
         <<-HACK
           @#{symbol}
           M=D
