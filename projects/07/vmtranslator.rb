@@ -21,7 +21,7 @@ class VMCommand
   end
 
   def to_hack
-    raise "Not implemented!!"
+    ""
   end
 
   class << self
@@ -52,42 +52,42 @@ end
 class BinaryOperatorCommand < VMCommand
   def to_hack
     <<-HACK
-      // START OF #{self}
       @SP
-      M=M-1     // SP--
-
-      @SP
-      A=M
-      D=M       // D=*SP
-
-      @SP       // SP--
       M=M-1
 
       @SP
       A=M
-      M=D#{operator}M   // *SP=D+*SP
+      D=M
 
-      @SP               // SP++
+      @SP
+      M=M-1
+
+      @SP
+      A=M
+      #{operator_code}
+
+      @SP
       M=M+1
-      // END OF #{self}
     HACK
+  end
+
+  def operator_code
+    'M=D-M'
   end
 end
 
 class UnaryOperatorCommand < VMCommand
   def to_hack
     <<-HACK
-      // START OF #{self}
       @SP
-      M=M-1     // SP--
+      M=M-1
 
       @SP
       A=M
-      M=#{operator}M   // *SP=!*SP
+      M=#{operator}M
 
-      @SP               // SP++
+      @SP
       M=M+1
-      // END OF #{self}
     HACK
   end
 end
@@ -97,8 +97,8 @@ class AddCommand < BinaryOperatorCommand
     line == 'add'
   end
 
-  def operator
-    ?+
+  def operator_code
+    'M=D+M'
   end
 end
 
@@ -107,32 +107,10 @@ class SubCommand < BinaryOperatorCommand
     line == 'sub'
   end
 
-  def operator
-    ?-
-  end
-
-  def to_hack
-    # TODO: reuse AddCommand
+  def operator_code
     <<-HACK
-      // START OF #{self}
-      @SP
-      M=M-1     // SP--
-
-      @SP
-      A=M
-      D=M       // D=*SP
-
-      @SP       // SP--
-      M=M-1
-
-      @SP
-      A=M
       D=-D
-      M=D+M   // *SP=D+*SP
-
-      @SP               // SP++
-      M=M+1
-      // END OF #{self}
+      M=D+M
     HACK
   end
 end
@@ -142,8 +120,8 @@ class AndCommand < BinaryOperatorCommand
     line == 'and'
   end
 
-  def operator
-    ?&
+  def operator_code
+    'M=D&M'
   end
 end
 
@@ -152,8 +130,8 @@ class OrCommand < BinaryOperatorCommand
     line == 'or'
   end
 
-  def operator
-    ?|
+  def operator_code
+    'M=D|M'
   end
 end
 
@@ -180,7 +158,7 @@ end
 class EqCommand < BinaryOperatorCommand
   @@address = 0
 
-  def initialize(line)
+  def initialize(line, filename)
     @address = (@@address += 1)
     super
   end
@@ -193,25 +171,10 @@ class EqCommand < BinaryOperatorCommand
     'JEQ'
   end
 
-  def to_hack
-    # TODO: reuse BinaryOperatorCommand
+  def operator_code
     <<-HACK
-      // START OF #{self}
-      @SP
-      M=M-1     // SP--
-
-      @SP
-      A=M
-      D=M       // D=*SP
-
-      @SP       // SP--
-      M=M-1
-
-      @SP
-      A=M
-      //M=-M    // negate M
       D=-D
-      D=D+M   // *SP=*SP+D
+      D=D+M
 
       @TRUE#@address
       D;#{jump_instruction}
@@ -220,23 +183,19 @@ class EqCommand < BinaryOperatorCommand
       0;JMP
 
       (TRUE#@address)
-        @SP            // *SP=-1
+        @SP
         A=M
         M=0
         M=!M
         @END#@address
         0;JMP
       (FALSE#@address)
-        @SP             // *SP=0
+        @SP
         A=M
         M=0
         @END#@address
         0;JMP
       (END#@address)
-
-      @SP               // SP++
-      M=M+1
-      // END OF #{self}
     HACK
   end
 end
@@ -268,6 +227,15 @@ class PushCommand < VMCommand
     line.start_with?('push')
   end
 
+  def get_pointer_symbol(segment, index)
+    case
+      when segment == 'temp' then TEMP_ADDRESS + index
+      when index == 0 then 'THIS'
+      when segment == 'static' then [ File.basename(@filename, ".*"), index ] * ?.
+      else'THAT'
+    end
+  end
+
   def symbol_map
     @symbol_map ||= {
       'local'    => 'LCL',
@@ -296,37 +264,20 @@ class PushCommand < VMCommand
           #{offset_modifier}
           D=M
         HACK
-      when 'temp'
+      when 'temp', 'pointer', 'static'
         <<-HACK
-          @#{TEMP_ADDRESS + index}
-          D=M
-        HACK
-      when 'pointer'
-        # TODO: fold this in with temp?
-        symbol = index == 0 ? 'THIS' : 'THAT'
-        <<-HACK
-          @#{symbol}
-          D=M
-        HACK
-      when 'static'
-        fname = (File.basename(@filename, ".*"))
-        symbol = [ fname, index ].join(?.)
-        <<-HACK
-          @#{symbol}
+          @#{get_pointer_symbol(segment, index)}
           D=M
         HACK
     end
 
     return <<-HACK
-      // START OF PUSH
       #{arg_hack}
-      @SP     // *SP = D
+      @SP
       A=M
       M=D
-
-      @SP   // SP++
+      @SP
       M=M+1
-      // END OF PUSH
     HACK
   end
 end
@@ -350,51 +301,27 @@ class PopCommand < PushCommand
           #{offset_modifier}
           M=D
         HACK
-      when 'temp'
+      when 'temp', 'pointer', 'static'
         <<-HACK
-          @#{TEMP_ADDRESS + index}
-          M=D
-        HACK
-      when 'pointer'
-        symbol = index == 0 ? 'THIS' : 'THAT'
-        <<-HACK
-          @#{symbol}
-          M=D
-        HACK
-      when 'static'
-        fname = (File.basename(@filename, ".*"))
-        symbol = [ fname, index ].join(?.)
-        <<-HACK
-          @#{symbol}
+          @#{get_pointer_symbol(segment, index)}
           M=D
         HACK
     end
 
     return <<-HACK
-      // START OF POP
-      @SP   // SP--
+      @SP
       M=M-1
-      A=M   // D=*SP
+      A=M
       D=M
-
       #{arg_hack}
-      // END OF POP
     HACK
   end
 end
 
 class NoOpCommand < VMCommand
-  # represents comments and empty lines
-  def to_hack
-    ""
-  end
-
   def self.matches?(line)
     true
   end
-end
-
-class VMCodeWriter
 end
 
 def main(file)
