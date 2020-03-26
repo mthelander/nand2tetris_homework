@@ -48,7 +48,7 @@ class VMCommand
         when /^if-goto/  then IfGotoCommand
         when /^call/     then CallCommand
         when /^function/ then FunctionCommand
-        when 'return'    then ReturnCommand
+        when /^return/    then ReturnCommand
         else VMCommand # no-op: comments and whitespace
       end
     end
@@ -509,7 +509,9 @@ def main(file)
       files[0].gsub('.vm', '.asm')
   end
 
-  parsers[0].commands.unshift(BootstrapCommand.new('', files[0]))
+  if files.any? { |f| f.end_with?("Sys.vm") }
+    parsers[0].commands.unshift(BootstrapCommand.new('', files[0]))
+  end
 
   codes = parsers.map do |parser|
     parser.commands.map(&:to_hack_no_whitespace).reject(&:empty?).join("\n")
