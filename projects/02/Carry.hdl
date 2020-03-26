@@ -1,0 +1,10 @@
+CHIP Carry {
+    IN a, b, c;
+    OUT out;
+
+    PARTS:
+    Generate(a=a, b=b, out=gen);
+    Propagate(a=a, b=b, out=prop);
+    And(a=prop, b=c, out=propandcarry);
+    Or(a=gen, b=propandcarry, out=out);
+}

@@ -1,0 +1,15 @@
+CHIP Propagate {
+    IN a, b, carry;
+    OUT out;
+
+    PARTS:
+    // Propagate, will carry if there is a downstream carry
+    // P(A,B) = A OR B
+    // Propagate, will carry only if there is a downstream carry
+    //Or(a=a, b=b, out=out);
+
+    // Alternately, P'(A,B) = A XOR B
+    // Given these definitions, Ci+1 = Gi OR (Pi AND Ci)
+    // (a bit carries if it generates or it both propagates and carries)
+    Xor(a=a, b=b, out=out);
+}

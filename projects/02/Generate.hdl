@@ -1,0 +1,9 @@
+CHIP Generate {
+    IN a, b;
+    OUT out;
+
+    PARTS:
+    // Generate, will carry regardless of a downstream carry
+    // G(A,B) = A AND B
+    And(a=a, b=b, out=out);
+}
