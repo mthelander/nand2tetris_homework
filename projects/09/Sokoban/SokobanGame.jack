@@ -1,0 +1,58 @@
+class SokobanGame {
+    field GameBoard board;
+    field int direction;
+
+    constructor SokobanGame new() {
+        var Array a;
+        let a = Array.new(4);
+        let a[0] = "#####";
+        let a[1] = "#   #";
+        let a[2] = "#.o@#";
+        let a[3] = "#####";
+
+        let board = GameBoard.new(a, 5, 4);
+        let direction = 0;
+        return this;
+    }
+
+    method void dispose() {
+        do board.dispose();
+        do Memory.deAlloc(this);
+        return;
+    }
+
+    method void moveSokoban() {
+        if (direction = 1) { do board.moveUp(); }
+        if (direction = 2) { do board.moveDown(); }
+        if (direction = 3) { do board.moveLeft(); }
+        if (direction = 4) { do board.moveRight(); }
+        do Sys.wait(1);  // delays the next movement
+        return;
+    }
+
+    method char getKeyPress() {
+        var char key;
+
+        let key = Keyboard.readChar();
+        return key;
+    }
+
+    method boolean play() {
+        var char key;  // the key currently pressed by the user
+        let key = 0;
+
+        while (~(board.finished())) {
+            do board.render();
+
+            let key = getKeyPress();
+            if (key = 81)  { return false;      }   // q key
+            if (key = 131) { let direction = 1; }   // up arrow
+            if (key = 133) { let direction = 2; }   // down arrow
+            if (key = 130) { let direction = 3; }   // left arrow
+            if (key = 132) { let direction = 4; }   // right arrow
+
+            do moveSokoban();
+        }
+        return board.won();
+    }
+}

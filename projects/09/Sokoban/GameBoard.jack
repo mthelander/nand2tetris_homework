@@ -1,0 +1,109 @@
+class GameBoard {
+    static char MAN, CRATE, WALL, STORAGE, EMPTY, CRATEONSTORAGE, MANONSTORAGE;
+    field Array lines;
+    field Array currentState;
+    field int lineSize;
+    field int numLines;
+
+    constructor GameBoard new(Array l, int ls, int nl) {
+        let lines = l;
+        let currentState = l;
+        let lineSize = ls;
+        let numLines = nl;
+
+        let MAN = 64; // @
+        let CRATE = 111; // o
+        let WALL = 35; // #
+        let STORAGE = 46; // .
+        let EMPTY = 32; // space
+        let CRATEONSTORAGE = 42; // *
+        let MANONSTORAGE = 43; // +
+
+        return this;
+    }
+
+    method boolean finished() {
+        return false;
+    }
+
+    method boolean won() {
+        return false;
+    }
+
+    method void reset() {
+        do Output.moveCursor(0, 0);
+        return;
+    }
+
+    method void render() {
+        var int i;
+        let i = 0;
+
+        do reset();
+
+        while (i < numLines) {
+            do Output.printString(lines[i]);
+            do Output.println();
+            let i = i + 1;
+        }
+        return;
+    }
+
+    method int findLocation(char target) {
+        var int i, j;
+        var char c;
+        var String line;
+
+        let i = 0;
+        let j = 0;
+
+        while (i < numLines) {
+            while (j < lineSize) {
+                let line = lines[i];
+                let c = line.charAt(j);
+                if (c = target) {
+                    return Point.new(i, j);
+                }
+                let j = j + 1;
+            }
+            let i = i + 1;
+        }
+        return Point.new(-1, -1);
+    }
+
+    method void moveUp() {
+        var Point loc;
+        var String line, curLine;
+        var char moveTo;
+
+        let loc = findLocation(MAN);
+
+        if (loc.getX() > 0) {
+            let curLine = lines[loc.getX()-1];
+            let line = lines[loc.getX()-1];
+            let moveTo = line.charAt(loc.getY());
+
+            if (~((moveTo = WALL) | (moveTo = CRATE))) { // neither wall nor crate
+                do line.setCharAt(loc.getX()-1, MAN);
+                do curLine.setCharAt(loc.getX(), moveTo);
+            }
+        }
+        return;
+    }
+    method void moveDown() {
+        return;
+    }
+    method void moveLeft() {
+        return;
+    }
+    method void moveRight() {
+        return;
+    }
+
+    method void dispose() {
+        do lines.dispose();
+        do currentState.dispose();
+        do Memory.deAlloc(this);
+        return;
+    }
+}

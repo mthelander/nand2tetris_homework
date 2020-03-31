@@ -1,0 +1,14 @@
+class Main {
+    function void main() {
+        var SokobanGame game;
+        let game = SokobanGame.new();
+        if (game.play()) {
+            do Output.printString("You won!");
+        } else {
+            do Output.printString("You have brought shame on your family");
+        }
+        do Output.println();
+        do game.dispose();
+        return;
+    }
+}
