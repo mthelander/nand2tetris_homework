@@ -22,7 +22,7 @@ class JackTokenizer
     # TODO how come flipflop doesn't work?
     if @@found_literal || char == '"'
       @@found_literal = !@@found_literal if char == '"'
-      return :string_const
+      return :stringConstant
     end
     case char
       when /[a-zA-Z0-9]/ then :alphanumeric
@@ -70,7 +70,7 @@ class Token
       when keyword?(value) then :keyword
       when name == :alphanumeric && value =~ /^[0-9]+$/ then :integerConstant
       when name == :alphanumeric then :identifier
-      when name == :string_const then :stringConstant
+      when name == :stringConstant then :stringConstant
       when name == :whitespace then name
       else :symbol
     end
@@ -88,7 +88,7 @@ class Token
   end
 
   def remove_quotes_maybe(val)
-    if @name == :string_const
+    if @name == :stringConstant
       val.tr('"', '')
     else
       val
@@ -115,12 +115,6 @@ class JackAnalyzer
     files.each do |filepath|
       tokenizer = JackTokenizer.new(filepath)
       puts tokenizer.to_xml
-      #output = CompilationEngine.compile(tokenizer.tokens)
-      #outputfile = filepath.gsub('.jack', '.xml')
-
-      #open(outputfile, 'w') do |f|
-      #  f.puts output.join('\n')
-      #end
     end
   end
 end
