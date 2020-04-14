@@ -103,6 +103,285 @@ end
 class CompilationEngine
   class << self
     def compile(tokens)
+      return '' if tokens.empty?
+      curr, *remaining_tokens = tokens
+      p curr
+      case curr.name
+        when :keyword
+          case curr.value
+            when 'class'
+              compile_class(remaining_tokens)
+            when 'method', 'function', 'constructor'
+              compile_subroutine(curr.value, remaining_tokens)
+            when 'var'
+              compile_var_dec(remaining_tokens)
+            when 'static', 'field'
+              compile_class_var_dec(curr.value, remaining_tokens)
+            when 'let'
+              compile_let(remaining_tokens)
+            when 'do'
+              compile_do(remaining_tokens)
+            when 'if'
+              compile_if(remaining_tokens)
+            when 'while'
+              compile_while(remaining_tokens)
+            when 'return'
+              compile_return(remaining_tokens)
+            when 'else', 'true', 'false', 'null', 'this', 'int', 'boolean', 'char', 'void'
+              compile_keyword(curr.value) + compile(remaining_tokens)
+          end
+        when :integerConstant, :stringConstant
+          xml_value(curr.name.to_s, curr.value)
+        when :identifier
+          compile_identifier(curr.value)
+        when :symbol
+          case curr.value
+            when '('
+              compile_term(remaining_tokens)
+            when '{'
+              compile_term(remaining_tokens)
+            else
+              compile_symbol(curr.value)
+            end
+      end
+    end
+
+    def xml_value(tagname, value)
+      "<#{tagname}>#{value}</#{tagname}>"
+    end
+
+    def compile_keyword(value)
+      xml_value('keyword', value)
+    end
+
+    def compile_identifier(value)
+      xml_value('identifier', value)
+    end
+
+    def compile_symbol(value)
+      xml_value('symbol', value)
+    end
+
+    def parse_params_and_body(tokens)
+      params, tail = balanced_partition('(', ')', tokens)
+      body, rest = balanced_partition('{', '}', tail)
+      return [ params, body, rest ]
+    end
+
+    def partition(val, tokens)
+      head = slice_until(val, tokens)
+      tail = tokens[head.size..-1]
+      return [ head, tail ]
+    end
+
+    def slice_until(target, tokens)
+      index = tokens.find_index { |t| t.value == target }
+      tokens[0..index]
+    end
+
+    def balanced_partition(open, close, tokens)
+      return [] if tokens.empty?
+      idx = find_closing_char(open, close, tokens[1..-1])
+      head = tokens[0..idx]
+      tail = tokens[idx..-1]
+      return [ head, tail ]
+    end
+
+    def find_closing_char(opening, closing, tokens)
+      num_opening = 0
+
+      tokens.each_with_index do |token, i|
+        if token.value.to_s == opening
+          num_opening += 1
+        elsif token.value.to_s == closing
+          return i if num_opening < 1
+          num_opening -= 1
+        end
+      end
+
+      #raise tokens.map(&:value).join(" ").inspect
+      #raise "No matching #{closing} found!"
+    end
+
+    def compile_class(tokens)
+      name, *statements = tokens
+      <<-XML
+        <class>
+          #{compile_keyword('class')}
+          #{compile_identifier(name)}
+          #{compile_statements(statements)}
+        </class>
+      XML
+    end
+
+    def compile_subroutine(type, tokens)
+      returntype, name, *rest = tokens
+      params, body, other_tokens = parse_params_and_body(rest)
+
+      <<-XML
+        <subroutineDec>
+          #{compile_keyword(type)}
+          #{compile_identifier(returntype)}
+          #{compile_identifier(name)}
+          #{compile_parameter_list(params)}
+          <subroutineBody>
+            #{compile_statements(body)}
+          </subroutineBody>
+        </subroutineDec>
+
+        #{compile(other_tokens)}
+      XML
+    end
+
+    def compile_class_var_dec(type, tokens)
+      line, rest = partition(';', tokens)
+      datatype, *names_list = line
+      symbols = [ ';', ',' ]
+      compiled_list = names_list.map do |x|
+        val = x.value
+        symbols.include?(val) ? compile_symbol(val) : compile_identifier(val)
+      end
+      <<-XML
+        <classVarDec>
+          #{compile_keyword(type)}
+          #{compiled_list}
+        </classVarDec>
+        #{compile(rest)}
+      XML
+    end
+
+    def compile_parameter_list(tokens)
+      line, rest = balanced_partition('(', ')', tokens)
+      contents = line[1..-2]
+      compiled_line = contents.map { |x| compile([x]) }
+      <<-XML
+        #{compile_symbol('(')}
+        <parameterList>
+          #{compiled_line * "\n"}
+        </parameterList>
+        #{compile_symbol(')')}
+
+        #{compile(rest)}
+      XML
+    end
+
+    def compile_var_dec(tokens)
+      line, rest = partition(';', tokens)
+      datatype, *names_list = line
+      compiled_names = names_list.map { |x| compile([x]) } # TODO compile individually?
+      <<-XML
+        <varDec>
+          #{compile_keyword('var')}
+          #{compiled_names * "\n"}
+          #{compile_symbol(';')}
+        </varDec>
+
+        #{compile(rest)}
+      XML
+    end
+
+    def compile_statements(tokens)
+      curly_brace, *rest = tokens
+      idx = find_closing_char('{', '}', rest[1..-1])
+      statements = rest[0..idx]
+      other_tokens = rest[idx..-1]
+
+      <<-XML
+        #{compile_symbol('{')}
+
+        <statements>
+          #{compile(tokens[1..-1])}
+        </statements>
+
+        #{compile_symbol('}')}
+
+        #{compile(other_tokens)}
+      XML
+    end
+
+    def compile_do(tokens)
+      line, rest = partition(';', tokens)
+
+      <<-XML
+        <doStatement>
+          #{compile_keyword('do')}
+          #{compile(line)}
+        </doStatement>
+
+        #{compile(rest)}
+      XML
+    end
+
+    def compile_let(tokens)
+      line, rest = partition(';', tokens)
+
+      <<-XML
+        <letStatement>
+          #{compile_keyword('let')}
+          #{compile(line)}
+        </letStatement>
+
+        #{compile(rest)}
+      XML
+    end
+
+    def compile_while(tokens)
+      idx = find_closing_char('(', ')', tokens[1..-1])
+      predicate = tokens[0..idx]
+      statementidx = find_closing_char('{', '}', tokens[idx..-1])
+      statements = tokens[idx..statementidx]
+      rest = tokens[statementidx..-1]
+
+      <<-XML
+        <whileStatement>
+          #{compile_keyword('while')}
+          #{compile_expression(predicate)}
+          #{compile_statements(statements)}
+        </whileStatement>
+
+        #{compile(rest)}
+      XML
+    end
+
+    def compile_return(tokens)
+      statement, rest = partition(';', tokens)
+      <<-XML
+        <returnStatement>
+          #{compile_keyword('return')}
+          #{compile(statement)}
+        </returnStatement>
+        #{compile(rest)}
+      XML
+    end
+
+    def compile_if(tokens)
+      idx = find_closing_char('(', ')', tokens[1..-1])
+      predicate = tokens[0..idx]
+      statementidx = find_closing_char('{', '}', tokens[idx..-1])
+      statements = tokens[idx..statementidx]
+      rest = tokens[statementidx..-1]
+
+      <<-XML
+        <ifStatement>
+          #{compile_keyword('if')}
+          #{compile_expression(predicate)}
+          #{compile_statements(statements)}
+        </ifStatement>
+
+        #{compile(rest)}
+      XML
+    end
+
+    def compile_expression(tokens)
+      ""
+    end
+
+    def compile_term(tokens)
+      ""
+    end
+
+    def compile_expression_list(tokens)
+      ""
     end
   end
 end
@@ -114,7 +393,8 @@ class JackAnalyzer
 
     files.each do |filepath|
       tokenizer = JackTokenizer.new(filepath)
-      puts tokenizer.to_xml
+      #puts tokenizer.to_xml
+      puts CompilationEngine.compile(tokenizer.tokens)
     end
   end
 end
