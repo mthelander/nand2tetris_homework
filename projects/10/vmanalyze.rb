@@ -103,47 +103,24 @@ end
 class CompilationEngine
   class << self
     def compile(tokens)
-      return '' if tokens.empty?
-      curr, *remaining_tokens = tokens
-      p curr
-      case curr.name
-        when :keyword
-          case curr.value
-            when 'class'
-              compile_class(remaining_tokens)
-            when 'method', 'function', 'constructor'
-              compile_subroutine(curr.value, remaining_tokens)
-            when 'var'
-              compile_var_dec(remaining_tokens)
-            when 'static', 'field'
-              compile_class_var_dec(curr.value, remaining_tokens)
-            when 'let'
-              compile_let(remaining_tokens)
-            when 'do'
-              compile_do(remaining_tokens)
-            when 'if'
-              compile_if(remaining_tokens)
-            when 'while'
-              compile_while(remaining_tokens)
-            when 'return'
-              compile_return(remaining_tokens)
-            when 'else', 'true', 'false', 'null', 'this', 'int', 'boolean', 'char', 'void'
-              compile_keyword(curr.value) + compile(remaining_tokens)
-          end
-        when :integerConstant, :stringConstant
-          xml_value(curr.name.to_s, curr.value)
-        when :identifier
-          compile_identifier(curr.value)
-        when :symbol
-          case curr.value
-            when '('
-              compile_term(remaining_tokens)
-            when '{'
-              compile_term(remaining_tokens)
-            else
-              compile_symbol(curr.value)
-            end
-      end
+      @@tokens = tokens
+      compile_class
+    end
+
+    def datatypes
+      %w[ int boolean char ]
+    end
+
+    def symbols
+      %w[ { } [ ] ( ) . , ; _ ] + operators
+    end
+
+    def operators
+      %w[ + - * / & | < > = ]
+    end
+
+    def keywords
+      %w[ class constructor function method field static var true false null this let do if else while return void ]
     end
 
     def xml_value(tagname, value)
@@ -162,226 +139,414 @@ class CompilationEngine
       xml_value('symbol', value)
     end
 
-    def parse_params_and_body(tokens)
-      params, tail = balanced_partition('(', ')', tokens)
-      body, rest = balanced_partition('{', '}', tail)
-      return [ params, body, rest ]
+    def nextsym
+      @@tokens.slice!(0).value
     end
 
-    def partition(val, tokens)
-      head = slice_until(val, tokens)
-      tail = tokens[head.size..-1]
-      return [ head, tail ]
-    end
-
-    def slice_until(target, tokens)
-      index = tokens.find_index { |t| t.value == target }
-      tokens[0..index]
-    end
-
-    def balanced_partition(open, close, tokens)
-      return [] if tokens.empty?
-      idx = find_closing_char(open, close, tokens[1..-1])
-      head = tokens[0..idx]
-      tail = tokens[idx..-1]
-      return [ head, tail ]
-    end
-
-    def find_closing_char(opening, closing, tokens)
-      num_opening = 0
-
-      tokens.each_with_index do |token, i|
-        if token.value.to_s == opening
-          num_opening += 1
-        elsif token.value.to_s == closing
-          return i if num_opening < 1
-          num_opening -= 1
-        end
+    def nextidentifier
+      val = nextsym
+      if datatypes.include?(val)
+        raise "Unexpected type found: #{val}, expected identifier"
+      elsif symbols.include?(val)
+        raise "Unexpected symbol found: #{val}, expected identifier"
+      elsif keywords.include?(val)
+        raise "Unexpected keyword found: #{val}, expected identifier"
       end
-
-      #raise tokens.map(&:value).join(" ").inspect
-      #raise "No matching #{closing} found!"
+      val
     end
 
-    def compile_class(tokens)
-      name, *statements = tokens
+    def nexttype
+      optional_list(datatypes) || nextidentifier
+    end
+
+    def optional_list(vals)
+      vals.find { |v| optional(v) }
+    end
+
+    def one_of(vals)
+      optional_list(vals) || begin
+        raise "Value not found! Expected one of #{vals * ","}, got #{peek}"
+      end
+    end
+
+    def expect(val)
+      (check(val) && nextsym) || begin
+        raise "Unexpected value, expected #{val}, got #{peek}"
+      end
+    end
+
+    def check(val)
+      peek == val
+    end
+
+    def peek
+      @@tokens.first.value
+    end
+
+    def optional(val)
+      nextsym if check(val)
+    end
+
+    def compile_class
+      expect('class')
+      name = nextidentifier
+      expect('{')
+      vardecs = zero_or_more { compile_class_var_dec }
+      subdecs = zero_or_more { compile_subroutine }
+      expect('}')
+
       <<-XML
         <class>
           #{compile_keyword('class')}
           #{compile_identifier(name)}
-          #{compile_statements(statements)}
+          #{vardecs * "\n"}
+          #{subdecs * "\n"}
         </class>
       XML
     end
 
-    def compile_subroutine(type, tokens)
-      returntype, name, *rest = tokens
-      params, body, other_tokens = parse_params_and_body(rest)
+    def compile_subroutine
+      symbols = %w[ method function constructor ]
+      return unless symbols.include?(peek)
+
+      type = one_of(symbols)
+      returntype = nextsym
+      name = nextidentifier
+
+      expect('(')
+      params = compile_parameter_list
+      expect(')')
+      expect('{')
+      vardecs = zero_or_more { compile_var_dec }
+      body = compile_statements
+      expect('}')
 
       <<-XML
         <subroutineDec>
           #{compile_keyword(type)}
           #{compile_identifier(returntype)}
           #{compile_identifier(name)}
-          #{compile_parameter_list(params)}
+          #{compile_symbol('(')}
+          <parameterList>
+            #{params}
+          </parameterList>
+          #{compile_symbol(')')}
           <subroutineBody>
-            #{compile_statements(body)}
+            #{compile_symbol('{')}
+            #{vardecs * "\n"}
+            #{body}
+            #{compile_symbol('}')}
           </subroutineBody>
         </subroutineDec>
-
-        #{compile(other_tokens)}
       XML
     end
 
-    def compile_class_var_dec(type, tokens)
-      line, rest = partition(';', tokens)
-      datatype, *names_list = line
-      symbols = [ ';', ',' ]
-      compiled_list = names_list.map do |x|
-        val = x.value
-        symbols.include?(val) ? compile_symbol(val) : compile_identifier(val)
+    def compile_var_names
+      # TODO: use zero_or_more?
+      names = []
+      loop do
+        names << compile_identifier(nextidentifier)
+        comma = optional(',')
+        if comma.nil?
+          return names
+        else
+          names << compile_symbol(comma)
+        end
       end
+    end
+
+    def compile_class_var_dec
+      symbols = %w[ static field ]
+      return unless symbols.include?(peek)
+
+      type = one_of(symbols)
+      datatype = nexttype
+      names = compile_var_names
+      expect(';')
+
       <<-XML
         <classVarDec>
           #{compile_keyword(type)}
-          #{compiled_list}
+          #{names * "\n"}
+          #{compile_keyword(';')}
         </classVarDec>
-        #{compile(rest)}
       XML
     end
 
-    def compile_parameter_list(tokens)
-      line, rest = balanced_partition('(', ')', tokens)
-      contents = line[1..-2]
-      compiled_line = contents.map { |x| compile([x]) }
-      <<-XML
-        #{compile_symbol('(')}
-        <parameterList>
-          #{compiled_line * "\n"}
-        </parameterList>
-        #{compile_symbol(')')}
-
-        #{compile(rest)}
-      XML
+    def compile_parameter_list
+      ''.tap do |result|
+        return result if check(')')
+        loop do
+          result << compile_identifier(nexttype)
+          result << compile_identifier(nextidentifier)
+          break if check(')')
+          result << compile_symbol(expect(','))
+        end
+      end
     end
 
-    def compile_var_dec(tokens)
-      line, rest = partition(';', tokens)
-      datatype, *names_list = line
-      compiled_names = names_list.map { |x| compile([x]) } # TODO compile individually?
+    def compile_var_dec
+      return unless optional('var')
+
+      datatype = nexttype
+      names = compile_var_names
+
       <<-XML
         <varDec>
           #{compile_keyword('var')}
-          #{compiled_names * "\n"}
-          #{compile_symbol(';')}
+          #{compile_keyword(datatype)}
+          #{names * "\n"}
+          #{compile_symbol(expect(';'))}
         </varDec>
-
-        #{compile(rest)}
       XML
     end
 
-    def compile_statements(tokens)
-      curly_brace, *rest = tokens
-      idx = find_closing_char('{', '}', rest[1..-1])
-      statements = rest[0..idx]
-      other_tokens = rest[idx..-1]
+    def zero_or_more
+      [].tap do |result|
+        while val = yield
+          return result if val.empty? # TODO is this necessary?
+          result << val
+        end
+      end
+    end
 
+    def compile_statements
+      map = {
+        'let'    => -> { compile_let },
+        'if'     => -> { compile_if },
+        'while'  => -> { compile_while },
+        'do'     => -> { compile_do },
+        'return' => -> { compile_return },
+      }
+      # TODO: use zero or more?
+      statements = []
+      while val = map[peek]
+        statements << val.()
+      end
       <<-XML
-        #{compile_symbol('{')}
-
         <statements>
-          #{compile(tokens[1..-1])}
+          #{statements * "\n"}
         </statements>
-
-        #{compile_symbol('}')}
-
-        #{compile(other_tokens)}
       XML
     end
 
-    def compile_do(tokens)
-      line, rest = partition(';', tokens)
+    def compile_subroutine_call
+      # subroutineName '(' expressionList ')' | (className |
+      # varName) '.' subroutineName '(' expressionList ')'
+
+      # ((className | varName) '.')? subroutineName '(' expressionList ')'
+      compiled_string = compile_identifier(nextidentifier)
+      sym = one_of(%w[ ( . ])
+      compiled_string += compile_symbol(sym)
+
+      if sym == '.'
+        compiled_string += compile_identifier(nextidentifier)
+        compiled_string += compile_symbol(expect('('))
+      end
+
+      if rparen = optional(')')
+        compiled_string += compile_symbol(rparen)
+      else
+        compiled_string += compile_expression_list
+      end
+      compiled_string += compile_symbol(expect(';')) # TODO: move to compile do?
+    end
+
+    def compile_do
+      expect("do")
+      compiled_string = compile_subroutine_call
 
       <<-XML
         <doStatement>
           #{compile_keyword('do')}
-          #{compile(line)}
+          #{compiled_string}
         </doStatement>
-
-        #{compile(rest)}
       XML
     end
 
-    def compile_let(tokens)
-      line, rest = partition(';', tokens)
+    def compile_let
+      expect("let")
+      id = nextidentifier
+      if subscript = optional('[')
+        subscript = compile_symbol(subscript) + compile_expression + compile_symbol(expect(']'))
+      end
+
+      expect('=')
 
       <<-XML
         <letStatement>
           #{compile_keyword('let')}
-          #{compile(line)}
+          #{compile_identifier(id)}
+          #{subscript}
+          #{compile_symbol('=')}
+          #{compile_expression}
+          #{compile_symbol(expect(';'))}
         </letStatement>
-
-        #{compile(rest)}
       XML
     end
 
-    def compile_while(tokens)
-      idx = find_closing_char('(', ')', tokens[1..-1])
-      predicate = tokens[0..idx]
-      statementidx = find_closing_char('{', '}', tokens[idx..-1])
-      statements = tokens[idx..statementidx]
-      rest = tokens[statementidx..-1]
-
+    def compile_while
+      expect("while")
+      expect('(')
+      predicate = compile_expression
+      expect(')')
+      expect('{')
+      whilestatements = compile_statements
+      expect('}')
       <<-XML
         <whileStatement>
-          #{compile_keyword('while')}
-          #{compile_expression(predicate)}
-          #{compile_statements(statements)}
+          #{compile_keyword('if')}
+          #{compile_symbol('(')}
+          #{predicate}
+          #{compile_symbol(')')}
+          #{compile_symbol('{')}
+          #{whilestatements * "\n"}
+          #{compile_symbol('}')}
         </whileStatement>
-
-        #{compile(rest)}
       XML
     end
 
-    def compile_return(tokens)
-      statement, rest = partition(';', tokens)
+    def compile_return
+      exp = compile_keyword(expect("return"))
+      if peek != ';'
+        exp += compile_expression
+      end
+      exp += compile_symbol(expect(';'))
+      #statement = nextsym
+      #statement = if statement != ';'
+      #  compile_expression(true) + compile_symbol(expect(';'))
+      #else
+      #  compile_symbol(';')
+      #end
+
       <<-XML
         <returnStatement>
-          #{compile_keyword('return')}
-          #{compile(statement)}
+          #{exp}
         </returnStatement>
-        #{compile(rest)}
       XML
     end
 
-    def compile_if(tokens)
-      idx = find_closing_char('(', ')', tokens[1..-1])
-      predicate = tokens[0..idx]
-      statementidx = find_closing_char('{', '}', tokens[idx..-1])
-      statements = tokens[idx..statementidx]
-      rest = tokens[statementidx..-1]
+    def compile_if
+      expect("if")
+      expect('(')
+      predicate = compile_expression
+      expect(')')
+      expect('{')
+      ifstatements = compile_statements
+      expect('}')
+      else_str = if peek == 'else'
+        compile_keyword(expect('else')) + compile_symbol(expect('{')) + compile_statements + compile_symbol(expect('}'))
+      else
+        ''
+      end
 
       <<-XML
         <ifStatement>
           #{compile_keyword('if')}
-          #{compile_expression(predicate)}
-          #{compile_statements(statements)}
+          #{compile_symbol('(')}
+          #{predicate}
+          #{compile_symbol(')')}
+          #{compile_symbol('{')}
+          #{ifstatements}
+          #{compile_symbol('}')}
+          #{else_str}
         </ifStatement>
-
-        #{compile(rest)}
       XML
     end
 
-    def compile_expression(tokens)
-      ""
+    def compile_expression
+      # term (op term)*
+      terms = compile_term
+      while sym = optional_list(operators)
+        terms += compile_symbol(sym) + compile_term
+      end
+      <<-XML
+        <expression>
+          #{terms}
+        </expression>
+      XML
     end
 
-    def compile_term(tokens)
-      ""
+    def is_int(i)
+      Integer(i) rescue nil
     end
 
-    def compile_expression_list(tokens)
-      ""
+    def compile_integer_constant
+      if is_int(peek)
+        nextsym
+      end
+    end
+
+    def compile_string_constant
+      # TODO: quotes aren't in the tokens
+      if quote = optional('"')
+        val = compile_symbol(quote) + nextidentifier + compile_symbol(expect('"'))
+      end
+    end
+
+    def compile_keyword_constant
+      if val = optional_list(%w[ true false null this ])
+        compile_keyword(val)
+      end
+    end
+
+    def compile_unary_op
+      if sym = optional_list(%w[ - ~ ])
+        compile_symbol(sym) + compile_term # TODO nested <term>?
+      end
+    end
+
+    def compile_parenthetical
+      if rparen = optional('(')
+        compile_symbol(rparen) + compile_expression + compile_symbol(expect(')'))
+      end
+    end
+
+    def compile_term
+      # integerConstant | stringConstant | keywordConstant |
+      # varName | varName '[' expression ']' | subroutineCall |
+      # '(' expression ')' | unaryOp term
+      term = compile_integer_constant || begin
+        compile_string_constant || begin
+          compile_keyword_constant || begin
+            compile_unary_op || begin
+              compile_parenthetical || begin
+                str = compile_identifier(nextidentifier)
+                str + if sym = optional_list(%w{ [ ( . })
+                  compile_symbol(sym) + case sym
+                    when '[' # id == array
+                      compile_expression + compile_symbol(expect(']'))
+                    when '(' # id == subroutine call
+                      compile_expression_list + compile_symbol(expect(')'))
+                    when '.' # id == variable
+                      compile_identifier(nextidentifier) + compile_symbol(expect('(')) + compile_expression_list + compile_symbol(expect(')'))
+                  end
+                else
+                  ''
+                end
+              end
+            end
+          end
+        end
+      end
+
+      <<-XML
+        <term>
+          #{term}
+        </term>
+      XML
+    end
+
+    def compile_expression_list
+      exp = compile_expression
+      while comma = optional(',')
+        exp += compile_symbol(comma) + compile_expression
+      end
+      <<-XML
+        <expressionList>
+          #{exp}
+        </expressionList>
+      XML
     end
   end
 end
