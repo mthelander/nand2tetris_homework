@@ -19,7 +19,6 @@ class JackTokenizer
   end
 
   def chartype(char)
-    # TODO how come flipflop doesn't work?
     if @@found_literal || char == '"'
       @@found_literal = !@@found_literal if char == '"'
       return :stringConstant
@@ -107,6 +106,11 @@ class CompilationEngine
       compile_class
     end
 
+    def emit(x)
+      puts x.kind_of?(Array) ? x * "\n" : x
+      x
+    end
+
     def datatypes
       %w[ int boolean char ]
     end
@@ -179,6 +183,10 @@ class CompilationEngine
       peek == val
     end
 
+    def peek_kind
+      @@tokens.first.name
+    end
+
     def peek
       @@tokens.first.value
     end
@@ -188,70 +196,47 @@ class CompilationEngine
     end
 
     def compile_class
-      expect('class')
-      name = nextidentifier
-      expect('{')
-      vardecs = zero_or_more { compile_class_var_dec }
-      subdecs = zero_or_more { compile_subroutine }
-      expect('}')
-
-      <<-XML
-        <class>
-          #{compile_keyword('class')}
-          #{compile_identifier(name)}
-          #{vardecs * "\n"}
-          #{subdecs * "\n"}
-        </class>
-      XML
+      emit "<class>"
+      emit compile_keyword(expect('class'))
+      emit compile_identifier(nextidentifier)
+      emit compile_symbol(expect('{'))
+      compile_class_var_dec
+      compile_subroutine
+      emit compile_symbol(expect('}'))
+      emit "</class>"
     end
 
     def compile_subroutine
-      symbols = %w[ method function constructor ]
-      return unless symbols.include?(peek)
+      types = %w[ method function constructor ]
+      return unless types.include?(peek)
 
-      type = one_of(symbols)
-      returntype = nextsym
-      name = nextidentifier
+      emit "<subroutineDec>"
+      emit compile_keyword(one_of(types))
+      emit compile_identifier(optional_list(datatypes + ['void']) || nextidentifier)
+      emit compile_identifier(nextidentifier)
 
-      expect('(')
-      params = compile_parameter_list
-      expect(')')
-      expect('{')
-      vardecs = zero_or_more { compile_var_dec }
-      body = compile_statements
-      expect('}')
-
-      <<-XML
-        <subroutineDec>
-          #{compile_keyword(type)}
-          #{compile_identifier(returntype)}
-          #{compile_identifier(name)}
-          #{compile_symbol('(')}
-          <parameterList>
-            #{params}
-          </parameterList>
-          #{compile_symbol(')')}
-          <subroutineBody>
-            #{compile_symbol('{')}
-            #{vardecs * "\n"}
-            #{body}
-            #{compile_symbol('}')}
-          </subroutineBody>
-        </subroutineDec>
-      XML
+      emit compile_symbol(expect('('))
+      emit "<parameterList>"
+      unless check(')')
+        compile_parameter_list
+      end
+      emit "</parameterList>"
+      emit compile_symbol(expect(')'))
+      emit "<subroutineBody>"
+      emit compile_symbol(expect('{'))
+      compile_var_dec
+      emit compile_statements
+      emit compile_symbol(expect('}'))
+      emit "</subroutineBody>"
+      emit "</subroutineDec>"
+      compile_subroutine
     end
 
     def compile_var_names
-      # TODO: use zero_or_more?
-      names = []
-      loop do
-        names << compile_identifier(nextidentifier)
-        comma = optional(',')
-        if comma.nil?
-          return names
-        else
-          names << compile_symbol(comma)
-        end
+      emit compile_identifier(nextidentifier)
+      if comma = optional(',')
+        emit compile_symbol(comma)
+        compile_var_names
       end
     end
 
@@ -259,55 +244,34 @@ class CompilationEngine
       symbols = %w[ static field ]
       return unless symbols.include?(peek)
 
-      type = one_of(symbols)
-      datatype = nexttype
-      names = compile_var_names
-      expect(';')
-
-      <<-XML
-        <classVarDec>
-          #{compile_keyword(type)}
-          #{names * "\n"}
-          #{compile_keyword(';')}
-        </classVarDec>
-      XML
+      emit "<classVarDec>"
+      emit compile_keyword(one_of(symbols))
+      emit compile_identifier(nexttype)
+      compile_var_names
+      emit compile_symbol(expect(';'))
+      emit "</classVarDec>"
+      compile_class_var_dec
     end
 
     def compile_parameter_list
-      ''.tap do |result|
-        return result if check(')')
-        loop do
-          result << compile_identifier(nexttype)
-          result << compile_identifier(nextidentifier)
-          break if check(')')
-          result << compile_symbol(expect(','))
-        end
+      emit compile_identifier(nexttype)
+      emit compile_identifier(nextidentifier)
+      if comma = optional(',')
+        emit compile_symbol(comma)
+        compile_parameter_list
       end
     end
 
     def compile_var_dec
       return unless optional('var')
 
-      datatype = nexttype
-      names = compile_var_names
-
-      <<-XML
-        <varDec>
-          #{compile_keyword('var')}
-          #{compile_keyword(datatype)}
-          #{names * "\n"}
-          #{compile_symbol(expect(';'))}
-        </varDec>
-      XML
-    end
-
-    def zero_or_more
-      [].tap do |result|
-        while val = yield
-          return result if val.empty? # TODO is this necessary?
-          result << val
-        end
-      end
+      emit "<varDec>"
+      emit compile_keyword('var')
+      emit compile_keyword(nexttype)
+      compile_var_names
+      emit compile_symbol(expect(';'))
+      emit "</varDec>"
+      compile_var_dec
     end
 
     def compile_statements
@@ -318,16 +282,11 @@ class CompilationEngine
         'do'     => -> { compile_do },
         'return' => -> { compile_return },
       }
-      # TODO: use zero or more?
-      statements = []
+      emit "<statements>"
       while val = map[peek]
-        statements << val.()
+        val.()
       end
-      <<-XML
-        <statements>
-          #{statements * "\n"}
-        </statements>
-      XML
+      emit "</statements>"
     end
 
     def compile_subroutine_call
@@ -335,218 +294,177 @@ class CompilationEngine
       # varName) '.' subroutineName '(' expressionList ')'
 
       # ((className | varName) '.')? subroutineName '(' expressionList ')'
-      compiled_string = compile_identifier(nextidentifier)
+      emit compile_identifier(nextidentifier)
       sym = one_of(%w[ ( . ])
-      compiled_string += compile_symbol(sym)
+      emit compile_symbol(sym)
 
       if sym == '.'
-        compiled_string += compile_identifier(nextidentifier)
-        compiled_string += compile_symbol(expect('('))
+        emit compile_identifier(nextidentifier)
+        emit compile_symbol(expect('('))
       end
 
       if rparen = optional(')')
-        compiled_string += compile_symbol(rparen)
+        emit compile_symbol(rparen)
       else
-        compiled_string += compile_expression_list
+        compile_expression_list
+        emit compile_symbol(optional(')'))
       end
-      compiled_string += compile_symbol(expect(';')) # TODO: move to compile do?
     end
 
     def compile_do
-      expect("do")
-      compiled_string = compile_subroutine_call
-
-      <<-XML
-        <doStatement>
-          #{compile_keyword('do')}
-          #{compiled_string}
-        </doStatement>
-      XML
+      emit "<doStatement>"
+      emit compile_keyword(expect("do"))
+      compile_subroutine_call
+      emit compile_symbol(expect(';'))
+      emit "</doStatement>"
     end
 
     def compile_let
-      expect("let")
-      id = nextidentifier
+      emit "<letStatement>"
+      emit compile_keyword(expect("let"))
+      emit compile_identifier(nextidentifier)
       if subscript = optional('[')
-        subscript = compile_symbol(subscript) + compile_expression + compile_symbol(expect(']'))
+        emit compile_symbol(subscript)
+        emit compile_expression
+        emit compile_symbol(expect(']'))
       end
 
-      expect('=')
-
-      <<-XML
-        <letStatement>
-          #{compile_keyword('let')}
-          #{compile_identifier(id)}
-          #{subscript}
-          #{compile_symbol('=')}
-          #{compile_expression}
-          #{compile_symbol(expect(';'))}
-        </letStatement>
-      XML
+      emit compile_symbol(expect('='))
+      emit compile_expression
+      emit compile_symbol(expect(';'))
+      emit "</letStatement>"
     end
 
     def compile_while
-      expect("while")
-      expect('(')
-      predicate = compile_expression
-      expect(')')
-      expect('{')
-      whilestatements = compile_statements
-      expect('}')
-      <<-XML
-        <whileStatement>
-          #{compile_keyword('if')}
-          #{compile_symbol('(')}
-          #{predicate}
-          #{compile_symbol(')')}
-          #{compile_symbol('{')}
-          #{whilestatements * "\n"}
-          #{compile_symbol('}')}
-        </whileStatement>
-      XML
+      emit "<whileStatement>"
+      emit compile_keyword(expect("while"))
+      emit compile_symbol(expect('('))
+      emit compile_expression
+      emit compile_symbol(expect(')'))
+      emit compile_symbol(expect('{'))
+      compile_statements
+      emit compile_symbol(expect('}'))
+      emit "</whileStatement>"
     end
 
     def compile_return
-      exp = compile_keyword(expect("return"))
+      emit "<returnStatement>"
+      emit compile_keyword(expect("return"))
       if peek != ';'
-        exp += compile_expression
+        compile_expression
       end
-      exp += compile_symbol(expect(';'))
-      #statement = nextsym
-      #statement = if statement != ';'
-      #  compile_expression(true) + compile_symbol(expect(';'))
-      #else
-      #  compile_symbol(';')
-      #end
-
-      <<-XML
-        <returnStatement>
-          #{exp}
-        </returnStatement>
-      XML
+      emit compile_symbol(expect(';'))
+      emit "</returnStatement>"
     end
 
     def compile_if
-      expect("if")
-      expect('(')
-      predicate = compile_expression
-      expect(')')
-      expect('{')
-      ifstatements = compile_statements
-      expect('}')
-      else_str = if peek == 'else'
-        compile_keyword(expect('else')) + compile_symbol(expect('{')) + compile_statements + compile_symbol(expect('}'))
-      else
-        ''
+      emit "<ifStatement>"
+      emit compile_keyword(expect("if"))
+      emit compile_symbol(expect('('))
+      compile_expression
+      emit compile_symbol(expect(')'))
+      emit compile_symbol(expect('{'))
+      compile_statements
+      emit compile_symbol(expect('}'))
+      if peek == 'else'
+        emit compile_keyword(expect('else')) + compile_symbol(expect('{')) + compile_statements + compile_symbol(expect('}'))
       end
-
-      <<-XML
-        <ifStatement>
-          #{compile_keyword('if')}
-          #{compile_symbol('(')}
-          #{predicate}
-          #{compile_symbol(')')}
-          #{compile_symbol('{')}
-          #{ifstatements}
-          #{compile_symbol('}')}
-          #{else_str}
-        </ifStatement>
-      XML
+      emit "</ifStatement>"
     end
 
     def compile_expression
       # term (op term)*
-      terms = compile_term
+      emit "<expression>"
+      compile_term
       while sym = optional_list(operators)
-        terms += compile_symbol(sym) + compile_term
+        emit compile_symbol(sym)
+        compile_term
       end
-      <<-XML
-        <expression>
-          #{terms}
-        </expression>
-      XML
-    end
-
-    def is_int(i)
-      Integer(i) rescue nil
+      emit "</expression>"
     end
 
     def compile_integer_constant
-      if is_int(peek)
-        nextsym
+      if peek_kind == :integerConstant
+        emit xml_value("integerConstant", nextsym)
       end
     end
 
     def compile_string_constant
-      # TODO: quotes aren't in the tokens
-      if quote = optional('"')
-        val = compile_symbol(quote) + nextidentifier + compile_symbol(expect('"'))
+      if peek_kind == :stringConstant
+        emit xml_value("stringConstant", nextsym)
       end
     end
 
     def compile_keyword_constant
       if val = optional_list(%w[ true false null this ])
-        compile_keyword(val)
+        emit compile_keyword(val)
       end
     end
 
     def compile_unary_op
       if sym = optional_list(%w[ - ~ ])
-        compile_symbol(sym) + compile_term # TODO nested <term>?
+        emit compile_symbol(sym)
+        compile_term # TODO nested <term>?
       end
     end
 
     def compile_parenthetical
-      if rparen = optional('(')
-        compile_symbol(rparen) + compile_expression + compile_symbol(expect(')'))
+      if lparen = optional('(')
+        emit compile_symbol(lparen)
+        compile_expression
+        emit compile_symbol(expect(')'))
       end
     end
 
     def compile_term
+      emit "<term>"
       # integerConstant | stringConstant | keywordConstant |
       # varName | varName '[' expression ']' | subroutineCall |
       # '(' expression ')' | unaryOp term
-      term = compile_integer_constant || begin
-        compile_string_constant || begin
-          compile_keyword_constant || begin
-            compile_unary_op || begin
-              compile_parenthetical || begin
-                str = compile_identifier(nextidentifier)
-                str + if sym = optional_list(%w{ [ ( . })
-                  compile_symbol(sym) + case sym
-                    when '[' # id == array
-                      compile_expression + compile_symbol(expect(']'))
-                    when '(' # id == subroutine call
-                      compile_expression_list + compile_symbol(expect(')'))
-                    when '.' # id == variable
-                      compile_identifier(nextidentifier) + compile_symbol(expect('(')) + compile_expression_list + compile_symbol(expect(')'))
-                  end
+      compile_integer_constant or
+        compile_string_constant or
+        compile_keyword_constant or
+        compile_unary_op or
+        compile_parenthetical or
+        begin
+          emit compile_identifier(nextidentifier)
+          if sym = optional_list(%w{ [ ( . })
+            emit compile_symbol(sym)
+            case sym
+              when '[' # id == array
+                compile_expression
+                emit compile_symbol(expect(']'))
+              when '(' # id == subroutine call
+                if rparen = optional(')')
+                  emit compile_symbol(rparen)
                 else
-                  ''
+                  compile_expression_list
+                  emit compile_symbol(expect(')'))
                 end
-              end
+              when '.' # id == variable
+                emit compile_identifier(nextidentifier)
+                emit compile_symbol(expect('('))
+                if rparen = optional(')')
+                  emit compile_symbol(rparen)
+                else
+                  compile_expression_list
+                  emit compile_symbol(expect(')'))
+                end
             end
           end
         end
-      end
 
-      <<-XML
-        <term>
-          #{term}
-        </term>
-      XML
+      emit "</term>"
     end
 
     def compile_expression_list
-      exp = compile_expression
+      emit "<expressionList>"
+      compile_expression
       while comma = optional(',')
-        exp += compile_symbol(comma) + compile_expression
+        emit compile_symbol(comma)
+        compile_expression
       end
-      <<-XML
-        <expressionList>
-          #{exp}
-        </expressionList>
-      XML
+      emit "</expressionList>"
     end
   end
 end
@@ -558,7 +476,6 @@ class JackAnalyzer
 
     files.each do |filepath|
       tokenizer = JackTokenizer.new(filepath)
-      #puts tokenizer.to_xml
       puts CompilationEngine.compile(tokenizer.tokens)
     end
   end
