@@ -58,22 +58,35 @@ class Token
     @escaped_value = escape_value(value)
   end
 
-  def self.keyword?(str)
-    keywords = %w[ class method function constructor int boolean char void var static field let do if else while return true false null this ]
-    keywords.include?(str.downcase)
-  end
-
-  def self.build(name, value)
-    xml_name = case
-      when name.is_a?(Numeric) then :symbol
-      when keyword?(value) then :keyword
-      when name == :alphanumeric && value =~ /^[0-9]+$/ then :integerConstant
-      when name == :alphanumeric then :identifier
-      when name == :stringConstant then :stringConstant
-      when name == :whitespace then name
-      else :symbol
+  class << self
+    def datatypes
+      %w[ int boolean char ]
     end
-    new(xml_name, value)
+
+    def symbols
+      %w[ { } [ ] ( ) . , ; _ ] + operators
+    end
+
+    def operators
+      %w[ + - * / & | < > = ]
+    end
+
+    def keywords
+      %w[ class method function constructor int boolean char void var static field let do if else while return true false null this ]
+    end
+
+    def build(name, value)
+      xml_name = case
+        when name.is_a?(Numeric) then :symbol
+        when keywords.include?(value) then :keyword
+        when name == :alphanumeric && value =~ /^[0-9]+$/ then :integerConstant
+        when name == :alphanumeric then :identifier
+        when name == :stringConstant then :stringConstant
+        when name == :whitespace then name
+        else :symbol
+      end
+      new(xml_name, value)
+    end
   end
 
   def escape_value(val)
@@ -107,64 +120,33 @@ class CompilationEngine
     end
 
     def emit(x)
-      puts x.kind_of?(Array) ? x * "\n" : x
-      x
-    end
-
-    def datatypes
-      %w[ int boolean char ]
-    end
-
-    def symbols
-      %w[ { } [ ] ( ) . , ; _ ] + operators
-    end
-
-    def operators
-      %w[ + - * / & | < > = ]
-    end
-
-    def keywords
-      %w[ class constructor function method field static var true false null this let do if else while return void ]
-    end
-
-    def xml_value(tagname, value)
-      "<#{tagname}>#{value}</#{tagname}>"
-    end
-
-    def compile_keyword(value)
-      xml_value('keyword', value)
-    end
-
-    def compile_identifier(value)
-      xml_value('identifier', value)
-    end
-
-    def compile_symbol(value)
-      xml_value('symbol', value)
+      (x.kind_of?(String) ? x : x.to_xml).tap(&method(:puts))
     end
 
     def nextsym
-      @@tokens.slice!(0).value
+      @@tokens.slice!(0)
     end
 
     def nextidentifier
       val = nextsym
-      if datatypes.include?(val)
-        raise "Unexpected type found: #{val}, expected identifier"
-      elsif symbols.include?(val)
-        raise "Unexpected symbol found: #{val}, expected identifier"
-      elsif keywords.include?(val)
-        raise "Unexpected keyword found: #{val}, expected identifier"
+      if Token.datatypes.include?(val.value)
+        raise "Unexpected type found: #{val.value}, expected identifier"
+      elsif Token.symbols.include?(val.value)
+        raise "Unexpected symbol found: #{val.value}, expected identifier"
+      elsif Token.keywords.include?(val.value)
+        raise "Unexpected keyword found: #{val.value}, expected identifier"
       end
       val
     end
 
     def nexttype
-      optional_list(datatypes) || nextidentifier
+      optional_list(Token.datatypes) || nextidentifier
     end
 
     def optional_list(vals)
-      vals.find { |v| optional(v) }
+      if x = vals.find { |v| check(v) }
+        return optional(x)
+      end
     end
 
     def one_of(vals)
@@ -197,12 +179,12 @@ class CompilationEngine
 
     def compile_class
       emit "<class>"
-      emit compile_keyword(expect('class'))
-      emit compile_identifier(nextidentifier)
-      emit compile_symbol(expect('{'))
+      emit expect('class')
+      emit nextidentifier
+      emit expect('{')
       compile_class_var_dec
       compile_subroutine
-      emit compile_symbol(expect('}'))
+      emit expect('}')
       emit "</class>"
     end
 
@@ -211,31 +193,31 @@ class CompilationEngine
       return unless types.include?(peek)
 
       emit "<subroutineDec>"
-      emit compile_keyword(one_of(types))
-      emit compile_identifier(optional_list(datatypes + ['void']) || nextidentifier)
-      emit compile_identifier(nextidentifier)
+      emit one_of(types)
+      emit optional_list(Token.datatypes + ['void']) || nextidentifier
+      emit nextidentifier
 
-      emit compile_symbol(expect('('))
+      emit expect('(')
       emit "<parameterList>"
       unless check(')')
         compile_parameter_list
       end
       emit "</parameterList>"
-      emit compile_symbol(expect(')'))
+      emit expect(')')
       emit "<subroutineBody>"
-      emit compile_symbol(expect('{'))
+      emit expect('{')
       compile_var_dec
-      emit compile_statements
-      emit compile_symbol(expect('}'))
+      compile_statements
+      emit expect('}')
       emit "</subroutineBody>"
       emit "</subroutineDec>"
       compile_subroutine
     end
 
     def compile_var_names
-      emit compile_identifier(nextidentifier)
+      emit nextidentifier
       if comma = optional(',')
-        emit compile_symbol(comma)
+        emit comma
         compile_var_names
       end
     end
@@ -245,31 +227,30 @@ class CompilationEngine
       return unless symbols.include?(peek)
 
       emit "<classVarDec>"
-      emit compile_keyword(one_of(symbols))
-      emit compile_identifier(nexttype)
+      emit one_of(symbols)
+      emit nexttype
       compile_var_names
-      emit compile_symbol(expect(';'))
+      emit expect(';')
       emit "</classVarDec>"
       compile_class_var_dec
     end
 
     def compile_parameter_list
-      emit compile_identifier(nexttype)
-      emit compile_identifier(nextidentifier)
+      emit nexttype
+      emit nextidentifier
       if comma = optional(',')
-        emit compile_symbol(comma)
+        emit comma
         compile_parameter_list
       end
     end
 
     def compile_var_dec
-      return unless optional('var')
-
+      return unless vartoken = optional('var')
       emit "<varDec>"
-      emit compile_keyword('var')
-      emit compile_keyword(nexttype)
+      emit vartoken
+      emit nexttype
       compile_var_names
-      emit compile_symbol(expect(';'))
+      emit expect(';')
       emit "</varDec>"
       compile_var_dec
     end
@@ -294,90 +275,88 @@ class CompilationEngine
       # varName) '.' subroutineName '(' expressionList ')'
 
       # ((className | varName) '.')? subroutineName '(' expressionList ')'
-      emit compile_identifier(nextidentifier)
+      emit nextidentifier
       sym = one_of(%w[ ( . ])
-      emit compile_symbol(sym)
+      emit sym
 
-      if sym == '.'
-        emit compile_identifier(nextidentifier)
-        emit compile_symbol(expect('('))
+      if sym.value == '.'
+        emit nextidentifier
+        emit expect('(')
       end
 
-      if rparen = optional(')')
-        emit compile_symbol(rparen)
-      else
-        compile_expression_list
-        emit compile_symbol(optional(')'))
-      end
+      compile_expression_list
+      emit optional(')')
     end
 
     def compile_do
       emit "<doStatement>"
-      emit compile_keyword(expect("do"))
+      emit expect("do")
       compile_subroutine_call
-      emit compile_symbol(expect(';'))
+      emit expect(';')
       emit "</doStatement>"
     end
 
     def compile_let
       emit "<letStatement>"
-      emit compile_keyword(expect("let"))
-      emit compile_identifier(nextidentifier)
+      emit expect("let")
+      emit nextidentifier
       if subscript = optional('[')
-        emit compile_symbol(subscript)
-        emit compile_expression
-        emit compile_symbol(expect(']'))
+        emit subscript
+        compile_expression
+        emit expect(']')
       end
 
-      emit compile_symbol(expect('='))
-      emit compile_expression
-      emit compile_symbol(expect(';'))
+      emit expect('=')
+      compile_expression
+      emit expect(';')
       emit "</letStatement>"
     end
 
     def compile_while
       emit "<whileStatement>"
-      emit compile_keyword(expect("while"))
-      emit compile_symbol(expect('('))
-      emit compile_expression
-      emit compile_symbol(expect(')'))
-      emit compile_symbol(expect('{'))
+      emit expect("while")
+      emit expect('(')
+      compile_expression
+      emit expect(')')
+      emit expect('{')
       compile_statements
-      emit compile_symbol(expect('}'))
+      emit expect('}')
       emit "</whileStatement>"
     end
 
     def compile_return
       emit "<returnStatement>"
-      emit compile_keyword(expect("return"))
+      emit expect("return")
       if peek != ';'
         compile_expression
       end
-      emit compile_symbol(expect(';'))
+      emit expect(';')
       emit "</returnStatement>"
     end
 
     def compile_if
       emit "<ifStatement>"
-      emit compile_keyword(expect("if"))
-      emit compile_symbol(expect('('))
+      emit expect("if")
+      emit expect('(')
       compile_expression
-      emit compile_symbol(expect(')'))
-      emit compile_symbol(expect('{'))
+      emit expect(')')
+      emit expect('{')
       compile_statements
-      emit compile_symbol(expect('}'))
+      emit expect('}')
       if peek == 'else'
-        emit compile_keyword(expect('else')) + compile_symbol(expect('{')) + compile_statements + compile_symbol(expect('}'))
+        emit expect('else')
+        emit expect('{')
+        compile_statements
+        emit expect('}')
       end
       emit "</ifStatement>"
     end
 
     def compile_expression
-      # term (op term)*
       emit "<expression>"
       compile_term
-      while sym = optional_list(operators)
-        emit compile_symbol(sym)
+      while sym = optional_list(Token.operators)
+        emit sym
         compile_term
       end
       emit "</expression>"
@@ -385,34 +364,34 @@ class CompilationEngine
 
     def compile_integer_constant
       if peek_kind == :integerConstant
-        emit xml_value("integerConstant", nextsym)
+        emit nextsym
       end
     end
 
     def compile_string_constant
       if peek_kind == :stringConstant
-        emit xml_value("stringConstant", nextsym)
+        emit nextsym
       end
     end
 
     def compile_keyword_constant
       if val = optional_list(%w[ true false null this ])
-        emit compile_keyword(val)
+        emit val
       end
     end
 
     def compile_unary_op
       if sym = optional_list(%w[ - ~ ])
-        emit compile_symbol(sym)
-        compile_term # TODO nested <term>?
+        emit sym
+        compile_term
       end
     end
 
     def compile_parenthetical
       if lparen = optional('(')
-        emit compile_symbol(lparen)
+        emit lparen
         compile_expression
-        emit compile_symbol(expect(')'))
+        emit expect(')')
       end
     end
 
@@ -427,29 +406,21 @@ class CompilationEngine
         compile_unary_op or
         compile_parenthetical or
         begin
-          emit compile_identifier(nextidentifier)
+          emit nextidentifier
           if sym = optional_list(%w{ [ ( . })
-            emit compile_symbol(sym)
-            case sym
+            emit sym
+            case sym.value
               when '[' # id == array
                 compile_expression
-                emit compile_symbol(expect(']'))
+                emit expect(']')
               when '(' # id == subroutine call
-                if rparen = optional(')')
-                  emit compile_symbol(rparen)
-                else
-                  compile_expression_list
-                  emit compile_symbol(expect(')'))
-                end
+                compile_expression_list
+                emit expect(')')
               when '.' # id == variable
-                emit compile_identifier(nextidentifier)
-                emit compile_symbol(expect('('))
-                if rparen = optional(')')
-                  emit compile_symbol(rparen)
-                else
-                  compile_expression_list
-                  emit compile_symbol(expect(')'))
-                end
+                emit nextidentifier
+                emit expect('(')
+                compile_expression_list
+                emit expect(')')
             end
           end
         end
@@ -459,10 +430,12 @@ class CompilationEngine
 
     def compile_expression_list
       emit "<expressionList>"
-      compile_expression
-      while comma = optional(',')
-        emit compile_symbol(comma)
+      unless check(')')
         compile_expression
+        while comma = optional(',')
+          emit comma
+          compile_expression
+        end
       end
       emit "</expressionList>"
     end
@@ -476,7 +449,7 @@ class JackAnalyzer
 
     files.each do |filepath|
       tokenizer = JackTokenizer.new(filepath)
-      puts CompilationEngine.compile(tokenizer.tokens)
+      CompilationEngine.compile(tokenizer.tokens)
     end
   end
 end

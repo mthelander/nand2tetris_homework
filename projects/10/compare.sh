@@ -1,1 +1,4 @@
-for f in **/*.jack; do echo "Filename: $f"; diff -Buw <(./projects/10/vmparser.rb $f | sed -e 's/></>\n</g') $(dirname $f)/$(basename $f .jack).xml; done 2>&1 | less
+#!/bin/bash
+
+file=$1
+diff -Buw <(./projects/10/vmanalyze.rb $file | sed -e 's/></>\n</g') "$(dirname $file)/$(basename $file .jack).xml"
