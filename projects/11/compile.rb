@@ -117,16 +117,6 @@ class CompilationEngine
       @@symbol_table
     end
 
-    def emit(x, attributes={})
-      #if x.kind_of?(Token) && x.name == :identifier # && !category.empty?
-      #  #type, category = attributes.values_at(:type, :category)
-      #  #@@symbol_table.define(x.value, type, category)
-      #  #puts { name: x.name type: type, category: category }.to_json
-      #  puts @@symbol_table.lookup(x.value)
-      #end
-      x
-    end
-
     def nextsym
       @@tokens.slice!(0)
     end
@@ -149,7 +139,7 @@ class CompilationEngine
 
     def optional_list(vals)
       if x = vals.find { |v| check(v) }
-        return optional(x)
+        optional(x)
       end
     end
 
@@ -182,39 +172,40 @@ class CompilationEngine
     end
 
     def compile_class
-      emit "<class>"
-      emit expect('class')
-      emit nextidentifier
-      emit expect('{')
+      expect('class')
+      @@classname = nextidentifier.value
+      expect('{')
       compile_class_var_dec
       compile_subroutine
-      emit expect('}')
-      emit "</class>"
+      expect('}')
     end
 
     def compile_subroutine
       types = %w[ method function constructor ]
       return unless types.include?(peek)
 
-      emit "<subroutineDec>"
-      emit one_of(types)
-      emit optional_list(Token.datatypes + ['void']) || nextidentifier
-      emit nextidentifier
+      subtype = one_of(types)
+      optional_list(Token.datatypes + ['void']) || nextidentifier
+      id = nextidentifier
 
-      emit expect('(')
-      emit "<parameterList>"
-      unless check(')')
-        compile_parameter_list
+      if subtype.value == 'method'
+        @@symbol_table.define('this', @@classname, :arg)
       end
-      emit "</parameterList>"
-      emit expect(')')
-      emit "<subroutineBody>"
-      emit expect('{')
+
+      expect('(')
+      nargs = 0
+      unless check(')')
+        nargs += compile_parameter_list
+      end
+      expect(')')
+
+      VMWriter.write_function(id.value, nargs)
+
+      expect('{')
       compile_var_dec
       compile_statements
-      emit expect('}')
-      emit "</subroutineBody>"
-      emit "</subroutineDec>"
+      expect('}')
+
       @@symbol_table.start_subroutine
       compile_subroutine
     end
@@ -223,7 +214,6 @@ class CompilationEngine
       id = nextidentifier
       @@symbol_table.define(id.value, datatype.value, kind.to_sym)
       if comma = optional(',')
-        emit comma
         compile_var_names(datatype, kind)
       end
     end
@@ -232,38 +222,29 @@ class CompilationEngine
       symbols = %w[ static field ]
       return unless symbols.include?(peek)
 
-      emit "<classVarDec>"
       sym = one_of(symbols)
-      emit sym
       datatype = nexttype
-      emit datatype
       compile_var_names(datatype, sym.value)
-      emit expect(';')
-      emit "</classVarDec>"
+      expect(';')
       compile_class_var_dec
     end
 
     def compile_parameter_list
       datatype = nexttype
-      emit datatype
       id = nextidentifier
       @@symbol_table.define(id.value, datatype.value, :arg)
-      emit id
       if comma = optional(',')
-        emit comma
-        compile_parameter_list
+        return 1 + compile_parameter_list
       end
+
+      return 1
     end
 
     def compile_var_dec
       return unless vartoken = optional('var')
-      emit "<varDec>"
-      emit vartoken
       datatype = nexttype
-      emit datatype
       compile_var_names(datatype, vartoken.value)
-      emit expect(';')
-      emit "</varDec>"
+      expect(';')
       compile_var_dec
     end
 
@@ -275,181 +256,198 @@ class CompilationEngine
         'do'     => -> { compile_do },
         'return' => -> { compile_return },
       }
-      emit "<statements>"
       while val = map[peek]
         val.()
       end
-      emit "</statements>"
     end
 
     def compile_subroutine_call
-      # subroutineName '(' expressionList ')' | (className |
-      # varName) '.' subroutineName '(' expressionList ')'
-
-      # ((className | varName) '.')? subroutineName '(' expressionList ')'
-      emit nextidentifier
+      id = nextidentifier
       sym = one_of(%w[ ( . ])
-      emit sym
 
       if sym.value == '.'
-        emit nextidentifier
-        emit expect('(')
+        other = nextidentifier
+        expect('(')
       end
 
       compile_expression_list
-      emit optional(')')
+      optional(')')
     end
 
     def compile_do
-      emit "<doStatement>"
-      emit expect("do")
+      expect("do")
       compile_subroutine_call
-      emit expect(';')
-      emit "</doStatement>"
+      expect(';')
     end
 
     def compile_let
-      emit "<letStatement>"
-      emit expect("let")
-      emit nextidentifier
-      if subscript = optional('[')
-        emit subscript
+      expect("let")
+      nextidentifier
+      if optional('[')
         compile_expression
-        emit expect(']')
+        expect(']')
       end
 
-      emit expect('=')
+      expect('=')
       compile_expression
-      emit expect(';')
-      emit "</letStatement>"
+      expect(';')
     end
 
     def compile_while
-      emit "<whileStatement>"
-      emit expect("while")
-      emit expect('(')
+      l1 = @@symbol_table.nextlabel
+      l2 = @@symbol_table.nextlabel
+
+      expect("while")
+
+      VMWriter.write_label l1
+
+      expect('(')
       compile_expression
-      emit expect(')')
-      emit expect('{')
+
+      VMWriter.write_arithmetic 'not'
+      VMWriter.write_if l2
+
+      expect(')')
+      expect('{')
       compile_statements
-      emit expect('}')
-      emit "</whileStatement>"
+
+      VMWriter.write_goto l1
+      VMWriter.write_label l2
+      expect('}')
     end
 
     def compile_return
-      emit "<returnStatement>"
-      emit expect("return")
-      if peek != ';'
-        compile_expression
-      end
-      emit expect(';')
-      emit "</returnStatement>"
+      expect("return")
+      compile_expression unless check(';')
+      expect(';')
     end
 
     def compile_if
-      emit "<ifStatement>"
-      emit expect("if")
-      emit expect('(')
+      expect("if")
+      expect('(')
       compile_expression
-      emit expect(')')
-      emit expect('{')
+
+      l1 = @@symbol_table.nextlabel
+      l2 = @@symbol_table.nextlabel
+
+      VMWriter.write_arithmetic 'not'
+      VMWriter.write_if l1
+
+      expect(')')
+      expect('{')
       compile_statements
-      emit expect('}')
-      if peek == 'else'
-        emit expect('else')
-        emit expect('{')
+      expect('}')
+
+      VMWriter.write_goto l2
+      VMWriter.write_label l1
+
+      if optional('else')
+        expect('{')
         compile_statements
-        emit expect('}')
+        expect('}')
       end
-      emit "</ifStatement>"
+
+      VMWriter.write_label l2
     end
 
     def compile_expression
-      emit "<expression>"
       compile_term
-      while sym = optional_list(Token.operators)
-        emit sym
-        compile_term
+      while op = optional_list(Token.operators)
+        compile_term.tap do
+          VMWriter.write_arithmetic op.value
+        end
       end
-      emit "</expression>"
     end
 
     def compile_integer_constant
       if peek_kind == :integerConstant
-        emit nextsym
+        nextsym.tap do |s|
+          VMWriter.write_push 'constant', s.value
+        end
       end
     end
 
     def compile_string_constant
       if peek_kind == :stringConstant
-        emit nextsym
+        # TODO: how are strings represented?
       end
     end
 
     def compile_keyword_constant
-      if val = optional_list(%w[ true false null this ])
-        emit val
+      optional_list(%w[ true false null this ]).tap do |keyword|
+        case keyword
+          when 'true'
+            VMWriter.write_push 'constant', '1'
+            VMWriter.write_arithmetic 'neg'
+          when 'false', 'null'
+            VMWriter.write_push 'constant', '0'
+          when 'this'
+            # TODO: lookup this in symbol table?
+            rec = @@symbol_table.lookup 'this'
+            VMWriter.write_push rec.kind, rec.index
+        end
       end
     end
 
     def compile_unary_op
-      if sym = optional_list(%w[ - ~ ])
-        emit sym
-        compile_term
+      if op = optional_list(%w[ - ~ ])
+        compile_term.tap do
+          VMWriter.write_arithmetic op
+        end
       end
     end
 
     def compile_parenthetical
-      if lparen = optional('(')
-        emit lparen
+      if optional('(')
         compile_expression
-        emit expect(')')
+        expect(')')
       end
     end
 
     def compile_term
-      emit "<term>"
-      # integerConstant | stringConstant | keywordConstant |
-      # varName | varName '[' expression ']' | subroutineCall |
-      # '(' expression ')' | unaryOp term
       compile_integer_constant or
         compile_string_constant or
         compile_keyword_constant or
         compile_unary_op or
         compile_parenthetical or
         begin
-          emit nextidentifier
-          if sym = optional_list(%w{ [ ( . })
-            emit sym
-            case sym.value
-              when '[' # id == array
-                compile_expression
-                emit expect(']')
-              when '(' # id == subroutine call
-                compile_expression_list
-                emit expect(')')
-              when '.' # id == variable
-                emit nextidentifier
-                emit expect('(')
-                compile_expression_list
-                emit expect(')')
-            end
+          id = nextidentifier
+          case optional_list(%w{ [ ( . })
+            when '[' # id == array
+              # TODO: handle arrays
+              compile_expression
+              expect(']')
+            when '(' # subroutine call; write call
+              nargs = compile_expression_list
+              expect(')')
+              VMWriter.write_call id.value, nargs
+            when '.' # id == var; write call
+              method = nextidentifier
+              expect('(')
+              nargs = compile_expression_list
+              expect(')')
+              subroutine = [ id.value, method.value ] * "."
+              VMWriter.write_call subroutine, nargs
+            else # var; push value of var onto the stack
+              rec = @@symbol_table.lookup(id.value)
+              VMWriter.write_push rec.kind, rec.index
           end
         end
-
-      emit "</term>"
     end
 
     def compile_expression_list
-      emit "<expressionList>"
+      nargs = 0
+
       unless check(')')
         compile_expression
+        nargs += 1
         while comma = optional(',')
-          emit comma
           compile_expression
+          nargs += 1
         end
       end
-      emit "</expressionList>"
+
+      return nargs
     end
   end
 end
@@ -461,10 +459,16 @@ SymbolTableEntry = Struct.new(:name, :type, :kind, :index) do
 end
 
 class SymbolTable
-  attr_accessor :class_scope, :subroutine_scope, :indices
+  attr_accessor :class_scope, :subroutine_scope, :indices, :label_idx
 
   def initialize
     @class_scope, @subroutine_scope, @indices = {}, {}, {}
+    @label_idx = 0
+  end
+
+  def nextlabel
+    @label_idx += 1
+    "LABEL#@label_idx"
   end
 
   def nextindex(kind)
@@ -509,7 +513,6 @@ class SymbolTable
   end
 
   def kindof(name)
-    # TODO what is "the current scope"?
     x = lookup(name)
     x.nil? ? :none : x.kind
   end
@@ -532,41 +535,59 @@ end
 
 class VMWriter
   class << self
+    def segment_map(x)
+      { const: 'constant', arg: 'argument' }[x] || x.to_s
+    end
+
     def write_push(segment, index)
       # segment = (const, arg, local, static, this, that, pointer, temp)
+      write "push #{segment_map(segment)} #{index}"
     end
 
     def write_pop(segment, index)
       # segment = (const, arg, local, static, this, that, pointer, temp)
+      write "pop #{segment_map(segment)} #{index}"
     end
 
     def write_arithmetic(command)
       # command = (add, sub, neg, eq, gt, lt, and, or, not)
+      command_map = { '+' => 'add', '-' => 'sub', '~' => 'neg', '=' => 'eq', '>' => 'gt', '<' => 'lt', '&' => 'and', '|' => 'or', '~' => 'not' }
+      write command_map[command]
     end
 
     def write_label(label)
       # label = string
+      write "label #{label}"
     end
 
     def write_goto(label)
       # label = string
+      write "goto #{label}"
     end
 
     def write_if(label)
       # label = string
+      write "if-goto #{label}"
     end
 
     def write_call(name, nargs)
       # name = string
       # nargs = int
+      write "call #{name} #{nargs}"
     end
 
     def write_function(name, nlocals)
       # name = string
       # nlocals = int
+      write "function #{name} #{nlocals}"
     end
 
     def write_return
+      write "return"
+    end
+
+    def write(line)
+      puts line
     end
   end
 end
